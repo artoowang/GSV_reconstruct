@@ -2,3 +2,9 @@
 *.bak
 *.log
 *.txt
+
+data
+data_large
+image_sets
+tmp
+webroot

@@ -1,0 +1,4 @@
+This directory is for DEM (Digital Elevation Model).
+Currently we are using GMTED2010 from http://eros.usgs.gov/#/Find_Data/Products_and_Data_Available/GMTED2010
+The ESRI ArcGrid (binary) data is downloaded from http://topotools.cr.usgs.gov/GMTED_viewer/gmted2010_global_grids.php
+We are using the 7.5 arc-seconds mean statistics

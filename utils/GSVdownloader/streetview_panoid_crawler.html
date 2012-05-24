@@ -1,0 +1,183 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml">
+
+  <!--
+	TODO: change
+  	This webpage randomly samples the panoramas near a list of lat/lng given by an 
+  	uploaded file (up to a specified number). The results are sent to 
+	http://www.cs.cornell.edu/w8/~cpwang/Landmarks3/GSVScraper/save_panoid.php,
+	which stores data in /home/cpwang/w8_htdocs/Landmarks3/GSVScraper/data/
+	Following are the CGI parameters:
+		- name: 		name of the database file under the storage directory
+		- max_panoid:	the maximum number of panoramas to retrieve
+
+	Credit: this page is modified from the Google StreetView scraper from [Gronat et al., 2011]
+		    DO NOT DISTRIBUTE
+  -->
+
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+	<title>Google Maps JavaScript API Example: Street View PanoId Getter</title>
+	<!-- Gronat et al.'s API key -->
+	<!--<script src="http://maps.google.com/maps?file=api&amp;v=2.x&amp;key=ABQIAAAAzr2EBOXUKnm_jVnk0OJI7xSosDVG8KKPE1-m51RBrvYughuyMxQ-i1QfUnH94QxWIa6N4U6MouMmBA" type="text/javascript"></script>-->
+	<!-- cpwang's API key -->
+	<!--<script src="http://maps.google.com/maps?file=api&amp;v=2.x&amp;key=AIzaSyA2iFeSJlP6Hjb1-IJz-36ErGasqv1Jiao" type="text/javascript"></script>-->
+	<!-- artoothetruth's API key -->
+	<script src="http://maps.google.com/maps?file=api&amp;v=2.x&amp;key=AIzaSyBH2v_Z1IHF1QxL9VwnWFhYcj_i20jnMDg" type="text/javascript"></script>
+    <script src="Queue.js" type="text/javascript"></script>
+    <script type="text/javascript"> 
+
+    var numid;
+    var queue;
+    var hashtable;
+    var panoClient;
+    var map;
+	var nextPanoId;
+	var prevLatLng;
+
+	var dbname;	// Database name
+
+	// Get CGI parameter
+    function getkey(key_str) {
+      	if(window.location.search) {
+        	var query = window.location.search.substr(1);
+        	var pairs = query.split(/&|;/);
+        	for(var i = 0; i < pairs.length; i++) {
+          		var pair = pairs[i].split("=");
+          		if(unescape(pair[0]) == key_str) return unescape(pair[1]);
+        	}
+      	}
+	}
+
+	// Clear DB
+	function clearOutput () {
+		obj = new XMLHttpRequest();
+		obj.open("GET", "http://www.cs.cornell.edu/w8/~cpwang/Landmarks3/GSVScraper/save_panoid.php?name="+dbname+"&reset", true);
+		obj.send(null);
+	}
+
+	// Send one record to DB
+	function sendRecord (panoid, lat, lng, yaw, tilt_yaw, tilt_pitch) {
+		obj = new XMLHttpRequest();
+		obj.open("GET", "http://www.cs.cornell.edu/w8/~cpwang/Landmarks3/GSVScraper/save_panoid.php?name="+dbname+"&panoid="+panoid+"&lat="+lat+"&lng="+lng+"&yaw="+yaw+"&tilt_yaw="+tilt_yaw+"&tilt_pitch="+tilt_pitch+"&seq="+numid, true);
+		obj.send(null);
+	}
+
+	// TODO: comment
+	// Callback function of getNearestPanorama() and getPanoramaById()
+    function showPanoData (panoData) {
+      if (panoData.code != 200) {
+        GLog.write('showPanoData: Server rejected with code: ' + panoData.code);
+        return;
+      }
+
+      insert(panoData.location.panoId);
+      var i=0;
+      for (i=0; i<panoData.links.length; i++) {
+		  if (!isMember(panoData.links[i].panoId)) {
+			  queue.enqueue({'panoId': panoData.links[i].panoId, 'prevLatLng': panoData.location.latlng});
+          	  insert(panoData.links[i].panoId);
+      	  }
+      }
+
+      var displayString = [
+        "Panorama ID: " + panoData.location.panoId,
+        "LatLng: " + panoData.location.latlng,
+        "Copyright: " + panoData.copyright,
+        "Description: " + panoData.location.description,
+	"#Links: " + panoData.links.length
+      ].join("<br/>");
+
+	  // Display
+	  GLog.write('Viewer moved to ' + panoData.location.latlng);
+	  // TODO: Drawing all the lines takes too much CPU
+	  /*if(prevLatLng != undefined) {
+		  var polyline = new GPolyline([prevLatLng, panoData.location.latlng], "#ff0000", 3);
+		  map.addOverlay(polyline);
+	  }*/
+	  if(numid % 100 == 0) {
+		  var delta = 0.0001;
+		  var polyline = new GPolyline([panoData.location.latlng, new GLatLng(panoData.location.latlng.lat()+delta, panoData.location.latlng.lng()+delta)], "#ff0000", 3);
+		  map.addOverlay(polyline);
+	  }
+
+	  sendRecord(panoData.location.panoId, panoData.location.latlng.lat(), panoData.location.latlng.lng(),
+				panoData.Projection.pano_yaw_deg, panoData.Projection.tilt_yaw_deg, panoData.Projection.tilt_pitch_deg);
+
+      numid++;
+
+      if (!queue.isEmpty()) {
+		  rec = queue.dequeue();
+		  nextPanoId = rec.panoId;
+		  prevLatLng = rec.prevLatLng;
+          setTimeout("next()", 500);
+      }
+    }
+
+	// Program entry
+ 	function initialize() {
+
+		// Database name
+		dbname = getkey("dbname");
+
+		// Clear DB
+		clearOutput();
+
+		panoClient = new GStreetviewClient();
+		map = new GMap2(document.getElementById("map_canvas"));
+
+		var startLatLng = new GLatLng(getkey("lat"),getkey("lng"));
+		map.setCenter(startLatLng, 15);
+		map.setUIToDefault();
+
+		// Start crawling
+      	numid = 0;
+      	queue = new Queue();
+		hashtable = {};
+		panoClient.getNearestPanorama(startLatLng, showPanoData);
+    }
+
+    function isMember(panoId) {
+      var level = 0;
+      var current = hashtable[panoId.charAt(level++)];
+      while ((current != null) && (level < panoId.length)) {
+        current = current[panoId.charAt(level++)];
+      }
+      return (current != null);
+    }
+
+	// Seems to record the current panorama, so we won't process it twice
+    function insert (panoId) {
+      var level = 0;
+      var currentold = hashtable;
+      var current = currentold[panoId.charAt(level++)];
+      while ((current != null) && (level < panoId.length)) {
+        currentold = current;
+        current = currentold[panoId.charAt(level++)];
+      }
+      if (current == null) {
+        level--;
+        while (level < panoId.length) {
+          currentold[panoId.charAt(level)] = {};
+          currentold = currentold[panoId.charAt(level++)];
+        }
+      }
+    }
+
+	// Called inside showPanoData() to get specified panorama
+    function next() {
+      panoClient.getPanoramaById(nextPanoId, showPanoData);
+    }
+
+    function destroy() {
+      GUnload();
+    }
+    
+    </script>
+  </head>
+
+  <body onload="initialize()" onunload="destroy()">
+    <div id="map_canvas" style="width: 800px; height: 550px"></div>
+  </body>
+
+</html>
